@@ -1,0 +1,4 @@
+GET https://www.googleapis.com/calendar/v3/calendars/tssmutti%40gmail.com/events?orderBy=startTime&singleEvents=true&key=1038817965506-dc899rq3gh965uou87bhqsvm3mg9bvec.apps.googleusercontent.com
+
+Headers:
+Authorization: Bearer ya29.1.AADtN_WmcaY_24nOpil7D4Kq9TAVtrIDCjxv6QaxCjNMyes8SZ4Qw97A7RRjN-M

@@ -1,0 +1,136 @@
+package com.mutti.rest;
+
+import java.util.Calendar;
+import java.util.Collections;
+import java.util.Date;
+import java.util.List;
+
+import javax.ws.rs.GET;
+import javax.ws.rs.Path;
+import javax.ws.rs.Produces;
+import javax.ws.rs.QueryParam;
+import javax.ws.rs.core.MediaType;
+
+import org.joda.time.DateTime;
+
+import com.daimler.moovel.domain.Cost;
+import com.daimler.moovel.domain.CostType;
+import com.google.api.services.calendar.Calendar.Events;
+import com.google.api.services.calendar.model.Event;
+import com.mutti.google.calendar.GoogleCalendarClientException;
+import com.mutti.google.calendar.GoogleCalendarConnector;
+import com.mutti.google.calendar.generated.Item;
+import com.mutti.google.connector.GoogleDirectionsConnector;
+import com.mutti.google.connector.MuttiRoute;
+import com.mutti.util.TripTime;
+
+@Path("/events")
+public class EventResource {
+
+	@GET
+	@Produces(MediaType.APPLICATION_JSON)
+	public List<MuttiEvent> getEventForUser() {
+		GoogleCalendarConnector connector = new GoogleCalendarConnector();
+		List<Event> calendarItems;
+		try {
+			calendarItems = connector.getEventItemsFromGoogle();
+			List<MuttiEvent> muttisEvents = MuttiMapper
+					.mapToMutti(calendarItems);
+			// store in memory
+			MuttisMemory.muttisEvents = muttisEvents;
+			return muttisEvents;
+		} catch (GoogleCalendarClientException e) {
+			e.printStackTrace();
+			return Collections.emptyList();
+		}
+	}
+
+	/**
+	 * Getting the overall trip duration for a given vehicletype, a start
+	 * position and a given event.
+	 * 
+	 * @param eventid
+	 * @param vehicletype
+	 * @param startlat
+	 * @param startlng
+	 * @return
+	 */
+	@GET
+	@Path("muttisresponse")
+	@Produces(MediaType.APPLICATION_JSON)
+	public MuttisResponse getMuttisResponse(
+			@QueryParam("eventid") String eventid,
+			@QueryParam("vehicletype") String vehicletype,
+			@QueryParam("startlat") String startlatitude,
+			@QueryParam("startlng") String startlongitude) {
+
+		MuttiEvent currentEvent = getMuttiEventById(eventid);
+		if (currentEvent == null) {
+			return new MuttisResponse();
+		}
+		// 1.
+		// do forward geocoding with currentEvent.getLocation()
+		// result will be endlatitude and endlongitude
+		RouteResource routing = new RouteResource();
+		Location location = routing.getForwardGeo(currentEvent.getLocation());
+
+		// 2.
+		// calculate duration via moovel
+		GoogleDirectionsConnector connector = new GoogleDirectionsConnector();
+		String start = startlatitude +","+ startlongitude;
+		String end = location.getLatitude()+","+location.getLongitude();
+        TripTime tripTime= new TripTime();
+        tripTime.setDeparture(false);
+        Calendar eventTime = Calendar.getInstance();
+        eventTime.setTime(currentEvent.getStart());
+        tripTime.setTime(eventTime);
+        List<MuttiRoute> routes = connector.getGoogleRoutes(start,end, tripTime, "driving");
+        int durationInSeconds = 0;
+        if(!routes.isEmpty()){
+            Cost durationCost = routes.get(0).getCosts().getCostsOfType(CostType.DURATION);
+            durationInSeconds = (int) durationCost.getValueAsLong();
+        }
+
+		MuttisResponse muttisResponse = new MuttisResponse();
+		muttisResponse.setTotalTripDurationInSeconds(durationInSeconds);
+		muttisResponse.setStatus(calculateIfEventIsObservable(
+				durationInSeconds, currentEvent.getStart()));
+		return muttisResponse;
+	}
+	
+	@GET
+	@Path("isalive")
+	@Produces(MediaType.TEXT_PLAIN)
+	public String isMuttiBackendAlive() {
+		return "This is MUTTI`s Backend Server! Also Greetings from VATI!";
+	}
+
+	public MuttiEvent getMuttiEventById(String eventId) {
+		if (MuttisMemory.muttisEvents != null) {
+			for (MuttiEvent muttiEvent : MuttisMemory.muttisEvents) {
+				if (muttiEvent.getEventId().equalsIgnoreCase(eventId)) {
+					return muttiEvent;
+				}
+			}
+		}
+		return null;
+	}
+
+	public MuttiStatus calculateIfEventIsObservable(int durationInSeconds,
+			Date appointment) {
+		DateTime currentDatePlusDrivingDuration = new DateTime();
+		currentDatePlusDrivingDuration = currentDatePlusDrivingDuration
+				.plusSeconds(durationInSeconds);
+
+		DateTime dateOfEvent = new DateTime(appointment);
+		if (currentDatePlusDrivingDuration.isBefore(dateOfEvent)) {
+			return MuttiStatus.GREEN;
+		}
+
+		if (currentDatePlusDrivingDuration.isAfter(dateOfEvent)) {
+			return MuttiStatus.RED;
+		} else {
+			return MuttiStatus.YELLOW;
+		}
+	}
+}
